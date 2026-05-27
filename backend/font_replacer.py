@@ -41,13 +41,13 @@ def find_font_size(draw, text, font_path, bbox, is_bold=False):
     w, h = bbox["width"], bbox["height"]
     n = len(text)
     if n <= 2:
-        base = int(h * 0.65)
+        base = int(h * 0.45)
     elif n <= 6:
-        base = int(h * 0.85)
+        base = int(h * 0.60)
     elif n <= 20:
-        base = int(h * 1.25)
+        base = int(h * 0.90)
     else:
-        base = int(h * 1.20)
+        base = int(h * 0.85)
     if is_bold:
         base = int(base * 0.75)
     width_limit = 0.80 if is_bold else (0.95 if n <= 6 else 0.92 if n <= 20 else 0.88)
