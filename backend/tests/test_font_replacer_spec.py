@@ -29,9 +29,14 @@ def test_line_count_within_tolerance():
 
 
 def test_char_bucket_height_multipliers():
-    """1-2 chars -> 0.45h, 3-6 -> 0.60h, 7-20 -> 0.90h, 20+ -> 0.85h."""
+    """1-2 chars -> 0.65h, 3-6 -> 0.85h, 7-20 -> 1.25h, 20+ -> 1.20h.
+
+    Increased ~1.43x from the original 0.45/0.60/0.90/0.85 to compensate
+    for OCR detection bboxes being tight on inked pixels (~70% of em-height)
+    rather than matching the visual glyph height the source rendered at.
+    """
     src = _source()
-    for marker in ("0.45", "0.60", "0.90", "0.85"):
+    for marker in ("0.65", "0.85", "1.25", "1.20"):
         assert marker in src, f"Missing height multiplier {marker}"
 
 
