@@ -38,34 +38,6 @@ class HumanizeRequest(BaseModel):
     style: str
 
 
-def parse_humanize_response(content_type: str, data: bytes):
-    if content_type.startswith("image/"):
-        return data
-
-    try:
-        payload = json.loads(data.decode("utf-8"))
-    except Exception:
-        raise HTTPException(status_code=502, detail="Unexpected humanize server response")
-
-    if isinstance(payload, dict):
-        if "image_base64" in payload:
-            return base64.b64decode(payload["image_base64"])
-        if "output" in payload:
-            output = payload["output"]
-            if isinstance(output, str) and output.startswith("data:image/"):
-                header, _, b64 = output.partition(",")
-                return base64.b64decode(b64)
-            if isinstance(output, str):
-                return base64.b64decode(output)
-        if "image" in payload:
-            image_data = payload["image"]
-            if isinstance(image_data, str):
-                if image_data.startswith("data:image/"):
-                    _, _, b64 = image_data.partition(",")
-                    return base64.b64decode(b64)
-                return base64.b64decode(image_data)
-
-    raise HTTPException(status_code=502, detail="Unexpected humanize server response")
 
 @app.get("/")
 def root():
@@ -116,67 +88,34 @@ async def replace_font(req: FontRequest):
 
 @app.post("/api/humanize")
 async def humanize_image(req: HumanizeRequest):
-    logging.info("Received humanize request for file_id=%s style=%s", req.file_id, req.style)
-    output_filename = f"{req.file_id}_output.png"
-    output_path = os.path.join(OUTPUTS_DIR, output_filename)
+    import cv2
+    from humanizer import apply_watercolor, apply_sketch, apply_oil_painting, apply_flat_art, apply_vintage
 
-    if os.path.exists(output_path):
-        image_path = output_path
-        logging.info("Using font-replaced image for humanize: %s", output_path)
-    else:
-        matches = [f for f in os.listdir(UPLOADS_DIR) if f.startswith(req.file_id)]
-        if not matches:
-            logging.error("No font-replaced or uploaded image found for file_id=%s", req.file_id)
-            raise HTTPException(status_code=404, detail="No image found for humanize request")
-        image_path = os.path.join(UPLOADS_DIR, matches[0])
-        logging.info("Fallback to original uploaded image for humanize: %s", image_path)
+    output_path = os.path.join(OUTPUTS_DIR, f"{req.file_id}_output.png")
+    if not os.path.exists(output_path):
+        raise HTTPException(status_code=404, detail="Font-replaced output not found")
 
-    try:
-        with open(image_path, "rb") as f:
-            file_bytes = f.read()
-    except Exception as exc:
-        logging.exception("Failed to read image for humanize: %s", image_path)
-        raise HTTPException(status_code=500, detail="Unable to read input image")
+    img = cv2.imread(output_path)
+    if img is None:
+        raise HTTPException(status_code=500, detail="Failed to load image")
 
-    files = {
-        "file": (os.path.basename(image_path), file_bytes, mimetypes.guess_type(image_path)[0] or "application/octet-stream")
+    style_map = {
+        "watercolor": apply_watercolor,
+        "sketch": apply_sketch,
+        "oil_painting": apply_oil_painting,
+        "flat_art": apply_flat_art,
+        "vintage": apply_vintage,
     }
-    data = {"style": req.style, "strength": 0.45}
+    fn = style_map.get(req.style)
+    if fn is None:
+        raise HTTPException(status_code=400, detail=f"Unknown style: {req.style}")
 
-    try:
-        response = requests.post(
-            "https://armband-washing-morality.ngrok-free.dev/humanize",
-            files=files,
-            data=data,
-            timeout=120,
-        )
-    except requests.exceptions.RequestException as exc:
-        logging.exception("Humanize server request failed")
-        raise HTTPException(status_code=502, detail="Humanize server request failed")
+    result = fn(img)
+    styled_filename = f"{req.file_id}_{req.style}.png"
+    styled_path = os.path.join(OUTPUTS_DIR, styled_filename)
+    cv2.imwrite(styled_path, result)
 
-    if response.status_code != 200:
-        logging.error("Humanize server returned %s: %s", response.status_code, response.text[:500])
-        raise HTTPException(status_code=502, detail=f"Humanize server returned {response.status_code}")
-
-    try:
-        image_bytes = parse_humanize_response(response.headers.get("Content-Type", ""), response.content)
-    except HTTPException:
-        raise
-    except Exception:
-        logging.exception("Failed to parse humanize response")
-        raise HTTPException(status_code=502, detail="Invalid response from humanize server")
-
-    humanized_filename = f"{req.file_id}_humanized.png"
-    humanized_path = os.path.join(OUTPUTS_DIR, humanized_filename)
-    try:
-        with open(humanized_path, "wb") as f:
-            f.write(image_bytes)
-    except Exception as exc:
-        logging.exception("Failed to save humanized image: %s", humanized_path)
-        raise HTTPException(status_code=500, detail="Unable to save humanized image")
-
-    logging.info("Humanized image saved: %s", humanized_path)
-    return {"output_url": f"/outputs/{humanized_filename}"}
+    return {"output_url": f"/outputs/{styled_filename}"}
 
 @app.get("/api/status/{file_id}")
 def get_status(file_id: str):
