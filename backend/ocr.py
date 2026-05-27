@@ -1,4 +1,5 @@
 import os
+import logging
 from pathlib import Path
 from statistics import median
 from PIL import Image
@@ -25,6 +26,8 @@ except ImportError:
 CONFIDENCE_THRESHOLD = 0.4
 
 _rapidocr_engine = None
+
+logger = logging.getLogger(__name__)
 
 
 def _setup_google_creds():
@@ -428,20 +431,29 @@ def detect_text(image_path: str):
 
     if GOOGLE_VISION_AVAILABLE:
         try:
-            return _detect_with_google_vision(image_path)
+            result = _detect_with_google_vision(image_path)
+            logger.info("ocr_engine: google_vision")
+            return result
         except Exception as exc:
+            logger.warning("google_vision failed: %s", exc)
             errors.append(f"google_vision: {exc}")
 
     if RAPIDOCR_AVAILABLE:
         try:
-            return _detect_with_rapidocr(image_path)
+            result = _detect_with_rapidocr(image_path)
+            logger.info("ocr_engine: rapidocr")
+            return result
         except Exception as exc:
+            logger.warning("rapidocr failed: %s", exc)
             errors.append(f"rapidocr: {exc}")
 
     if TESSERACT_AVAILABLE:
         try:
-            return _detect_with_tesseract(image_path)
+            result = _detect_with_tesseract(image_path)
+            logger.info("ocr_engine: tesseract")
+            return result
         except Exception as exc:
+            logger.warning("tesseract failed: %s", exc)
             errors.append(f"tesseract: {exc}")
 
     if errors:
