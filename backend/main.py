@@ -78,9 +78,15 @@ async def replace_font(req: FontRequest):
     try:
         from ocr import detect_text
         from font_replacer import replace_fonts
+        from region_validator import validate_legibility
+        # Disabled — caused inpaint-mask ghosting on dense images; re-enable with v2 expansion fix
+        # from region_normalizer import normalize_fontsize_groups
     except Exception:
         raise HTTPException(status_code=500, detail="Font replacement dependencies not available")
     regions = detect_text(file_path)
+    regions = validate_legibility(regions, req.font_name)
+    # Disabled — caused inpaint-mask ghosting on dense images; re-enable with v2 expansion fix
+    # regions = normalize_fontsize_groups(regions, req.font_name)
     output_filename = f"{req.file_id}_output.png"
     output_path = os.path.join(OUTPUTS_DIR, output_filename)
     replace_fonts(file_path, regions, req.font_name, output_path)
