@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# pre-commit hook: enforce the locked font_replacer.py spec.
+#
+# Activate once per clone (from repo root):
+#   git config core.hooksPath .githooks
+#
+# Bypass for a single commit (escape hatch):
+#   git commit --no-verify
+#
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+TEST_FILE="$REPO_ROOT/backend/tests/test_font_replacer_spec.py"
+TARGET_FILE="$REPO_ROOT/backend/font_replacer.py"
+
+# Nothing to guard if either file is absent — silent skip is correct here.
+if [ ! -f "$TEST_FILE" ] || [ ! -f "$TARGET_FILE" ]; then
+    exit 0
+fi
+
+# Find a Python 3 interpreter. Prefer the project venv, fall back to system.
+# The test is stdlib-only, so any Python 3.x works without extra installs.
+if [ -x "$REPO_ROOT/backend/venv/bin/python" ]; then
+    PYTHON="$REPO_ROOT/backend/venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON="python3"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON="python"
+else
+    echo "pre-commit: no Python interpreter found — cannot verify font_replacer spec" >&2
+    exit 1
+fi
+
+echo "pre-commit: checking font_replacer.py spec..."
+
+export REPO_ROOT
+"$PYTHON" - <<'PYEOF'
+import importlib.util, sys, os
+path = os.path.join(os.environ["REPO_ROOT"], "backend", "tests", "test_font_replacer_spec.py")
+spec = importlib.util.spec_from_file_location("t", path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+tests = [n for n in dir(mod) if n.startswith("test_")]
+failed = []
+for name in tests:
+    try:
+        getattr(mod, name)()
+    except AssertionError as e:
+        failed.append((name, str(e)))
+    except Exception as e:
+        failed.append((name, f"{e.__class__.__name__}: {e}"))
+if failed:
+    print(f"\n  font_replacer spec FAILED ({len(failed)}/{len(tests)} assertions):", file=sys.stderr)
+    for n, msg in failed:
+        print(f"    FAIL  {n}: {msg}", file=sys.stderr)
+    print("\n  Commit blocked. The locked spec is pinned in backend/tests/test_font_replacer_spec.py", file=sys.stderr)
+    print("  To bypass (not recommended): git commit --no-verify", file=sys.stderr)
+    sys.exit(1)
+print(f"  PASS  font_replacer spec ({len(tests)}/{len(tests)} assertions)")
+PYEOF
