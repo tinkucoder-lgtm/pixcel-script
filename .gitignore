@@ -46,6 +46,7 @@ wheels/
 *.egg
 .pytest_cache/
 .coverage
+backend/vision-key.json
 
 # IDEs
 .vscode/
@@ -59,3 +60,9 @@ wheels/
 # OS
 Thumbs.db
 .DS_Store
+
+# Session debug artifacts
+backend/outputs/*.png
+backend/uploads/*.png
+backend/uvicorn_8002.log
+backend/*.log
