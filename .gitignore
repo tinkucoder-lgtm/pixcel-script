@@ -63,6 +63,6 @@ Thumbs.db
 
 # Session debug artifacts
 backend/outputs/*.png
-backend/uploads/*.png
+backend/uploads/*
 backend/uvicorn_8002.log
 backend/*.log
