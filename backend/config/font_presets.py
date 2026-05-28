@@ -15,43 +15,99 @@ modifying it changes output for every endpoint call.
 FONT_PRESETS = {
     "editorial-elegant": {
         "display_name": "Editorial Elegant",
-        "headline_font": "a high-contrast editorial serif, Didot/Bodoni style",
-        "body_font": "a clean humanist sans-serif",
+        "headline_font": (
+            "an ultra-thin high-contrast serif with dramatic hairline strokes "
+            "and pronounced thick-to-thin transitions, like a Vogue or "
+            "Harper's Bazaar magazine cover"
+        ),
+        "body_font": (
+            "refined thin-serif lettering with high contrast strokes, like "
+            "Vogue magazine captions"
+        ),
     },
     "modern-minimal": {
         "display_name": "Modern Minimal",
-        "headline_font": "a bold clean geometric sans-serif",
-        "body_font": "a light geometric sans-serif",
+        "headline_font": (
+            "a bold geometric sans-serif with perfectly even stroke widths, "
+            "circular o's, and confident proportions, like a contemporary "
+            "museum identity or an Apple product launch"
+        ),
+        "body_font": (
+            "clean geometric sans-serif with even stroke width and generous "
+            "letter-spacing, like Apple product pages"
+        ),
     },
     "warm-handcrafted": {
         "display_name": "Warm Handcrafted",
-        "headline_font": "a friendly hand-lettered brush script",
-        "body_font": "a rounded humanist sans-serif",
+        "headline_font": (
+            "soft brush-lettered script with organic imperfect curves, "
+            "varying stroke widths, and gentle ink-like character, like "
+            "artisan craft packaging or a bakery wordmark"
+        ),
+        "body_font": (
+            "rounded casual hand-drawn lettering with soft edges and slightly "
+            "uneven baselines, looks hand-lettered not typed"
+        ),
     },
     "classic-serif": {
         "display_name": "Classic Serif",
-        "headline_font": "a traditional old-style serif, Garamond/Caslon style",
-        "body_font": "a complementary old-style serif at text weight",
+        "headline_font": (
+            "a stately old-style serif with bracketed serifs, modest stroke "
+            "contrast, and traditional Roman proportions, like a hardcover "
+            "book title or a newspaper masthead"
+        ),
+        "body_font": (
+            "traditional Roman serif letterforms with moderate contrast, like "
+            "a newspaper or book"
+        ),
     },
     "bold-impact": {
         "display_name": "Bold Impact",
-        "headline_font": "a heavy condensed sans-serif with strong presence",
-        "body_font": "a clean neutral grotesque sans-serif",
+        "headline_font": (
+            "an extra-heavy condensed sans-serif with chunky uppercase "
+            "letters, minimal letter-spacing, and assertive black weight, "
+            "like a movie poster or sports ad"
+        ),
+        "body_font": (
+            "thick condensed sans-serif with tight spacing and heavy weight, "
+            "like a sports poster"
+        ),
     },
     "vintage-retro": {
         "display_name": "Vintage Retro",
-        "headline_font": "a retro display slab-serif",
-        "body_font": "a vintage-style sans-serif",
+        "headline_font": (
+            "a chunky slab-serif with squared-off blocky serifs and a "
+            "slightly distressed letterpress texture, like a 1950s diner "
+            "sign or vintage travel poster"
+        ),
+        "body_font": (
+            "weathered slab-serif with a slightly worn texture, like old "
+            "letterpress printing"
+        ),
     },
     "luxury-refined": {
         "display_name": "Luxury Refined",
-        "headline_font": "an elegant thin serif with generous letter-spacing",
-        "body_font": "a refined sans-serif, small caps where appropriate",
+        "headline_font": (
+            "an elongated thin serif with extreme letter-spacing, hairline "
+            "strokes, and elegant tall proportions, like a luxury fashion "
+            "house wordmark"
+        ),
+        "body_font": (
+            "elegant thin sans-serif with wide letter-spacing and small caps "
+            "feel, like a high-end fashion brand"
+        ),
     },
     "playful-friendly": {
         "display_name": "Playful Friendly",
-        "headline_font": "a rounded playful display font",
-        "body_font": "a friendly rounded sans-serif",
+        "headline_font": (
+            "a rounded display font with bubbly bouncy letters, oversized "
+            "lowercase, soft friendly curves, and a slightly irregular "
+            "baseline, like a children's brand or modern playful startup"
+        ),
+        "body_font": (
+            "bubbly rounded sans-serif with oversized lowercase and bouncy "
+            "baseline, like a children's brand"
+        ),
     },
 }
 

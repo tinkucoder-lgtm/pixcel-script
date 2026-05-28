@@ -63,11 +63,24 @@ def test_validation_description_too_long():
     assert r.status_code == 422
 
 
-def test_validation_missing_headline():
+def test_validation_headline_is_optional(monkeypatch):
+    """headline used to be required; it's now optional. Validation should
+    pass when omitted, and the service receives headline=None so the prompt
+    asks Gemini to invent one."""
+    captured: dict = {}
+
+    async def fake_gen(**kwargs):
+        captured.update(kwargs)
+        return {"output_path": "outputs/fake.png",
+                "output_url": "/outputs/fake.png",
+                "reasoning_parts": []}
+    monkeypatch.setattr("services.design_generator.generate_design", fake_gen)
     body = _valid_body()
     del body["headline"]
     r = client.post("/api/generate-design", json=body)
-    assert r.status_code == 422
+    assert r.status_code == 200
+    # Service was called with headline=None (the absent field)
+    assert captured.get("headline") is None
 
 
 def test_validation_headline_too_long():
@@ -251,6 +264,193 @@ def test_build_prompt_appends_anti_ai_block():
     from config.font_presets import ANTI_AI_DESIGN
     p = build_prompt("d", "h", None, "s", "s")
     assert ANTI_AI_DESIGN in p
+
+
+def test_build_prompt_falls_back_when_headline_is_none():
+    """When headline is omitted, prompt instructs Gemini to invent one
+    rather than rendering a design with no title."""
+    p = build_prompt("d", None, "subtext", "s", "b")
+    assert "Create an appropriate, attention-grabbing headline" in p
+    # And does NOT include the verbatim-headline directive
+    assert "must prominently feature this exact headline" not in p
+
+
+def test_build_prompt_falls_back_when_subtext_is_none():
+    """When subtext is omitted, prompt asks Gemini to add fitting supporting
+    text rather than leaving the design caption-less."""
+    p = build_prompt("d", "h", None, "s", "b")
+    assert "Add fitting supporting text" in p
+
+
+def test_build_prompt_includes_equally_important_body_bullet():
+    """The typography rules block must call out body style as equally
+    important as headline — otherwise Gemini deprioritizes body fonts."""
+    p = build_prompt("d", "h", None, "s", "b")
+    assert "EQUALLY IMPORTANT" in p
+
+
+def test_previous_image_url_with_invalid_prefix_returns_400(monkeypatch):
+    """Reject anything that doesn't start with /outputs/ — path-traversal
+    guard."""
+    async def fake_gen(**kwargs):  # service should never be called
+        raise AssertionError("service must not be called for invalid input")
+    monkeypatch.setattr("services.design_generator.generate_design", fake_gen)
+    body = _valid_body()
+    body["previous_image_url"] = "/etc/passwd"
+    r = client.post("/api/generate-design", json=body)
+    assert r.status_code == 400
+    assert r.json()["error"] == "invalid_previous_image_url"
+
+
+def test_previous_image_url_with_path_traversal_returns_400(monkeypatch):
+    async def fake_gen(**kwargs):
+        raise AssertionError("service must not be called for invalid input")
+    monkeypatch.setattr("services.design_generator.generate_design", fake_gen)
+    body = _valid_body()
+    body["previous_image_url"] = "/outputs/../etc/passwd"
+    r = client.post("/api/generate-design", json=body)
+    assert r.status_code == 400
+
+
+def test_previous_image_url_nonexistent_returns_404(monkeypatch):
+    async def fake_gen(**kwargs):
+        raise AssertionError("service must not be called when file missing")
+    monkeypatch.setattr("services.design_generator.generate_design", fake_gen)
+    body = _valid_body()
+    body["previous_image_url"] = "/outputs/this-file-definitely-does-not-exist.png"
+    r = client.post("/api/generate-design", json=body)
+    assert r.status_code == 404
+    assert r.json()["error"] == "previous_image_not_found"
+
+
+def test_previous_image_url_valid_passes_bytes_to_service(monkeypatch, tmp_path):
+    """Valid /outputs/<filename> reads the file and forwards bytes to the
+    service via previous_image_bytes."""
+    img = tmp_path / "fixture.png"
+    fake_bytes = b"\x89PNG\r\n\x1a\nfake-png-bytes-for-test"
+    img.write_bytes(fake_bytes)
+    # Point the router's outputs_dir lookup at tmp_path
+    monkeypatch.setattr("config.settings.settings.outputs_dir", str(tmp_path))
+
+    captured: dict = {}
+    async def fake_gen(**kwargs):
+        captured.update(kwargs)
+        return {"output_path": "outputs/fake.png", "output_url": "/outputs/fake.png",
+                "reasoning_parts": []}
+    monkeypatch.setattr("services.design_generator.generate_design", fake_gen)
+
+    body = _valid_body()
+    body["previous_image_url"] = "/outputs/fixture.png"
+    r = client.post("/api/generate-design", json=body)
+    assert r.status_code == 200
+    assert captured.get("previous_image_bytes") == fake_bytes
+    assert captured.get("previous_image_mime") == "image/png"
+
+
+def test_omitted_previous_image_url_means_no_bytes_to_service(monkeypatch):
+    """Default behavior: no previous_image_url → previous_image_bytes is
+    None when the service is called."""
+    captured: dict = {}
+    async def fake_gen(**kwargs):
+        captured.update(kwargs)
+        return {"output_path": "outputs/fake.png", "output_url": "/outputs/fake.png",
+                "reasoning_parts": []}
+    monkeypatch.setattr("services.design_generator.generate_design", fake_gen)
+    body = _valid_body()
+    r = client.post("/api/generate-design", json=body)
+    assert r.status_code == 200
+    assert captured.get("previous_image_bytes") is None
+
+
+def test_compress_reference_image_shrinks_large_input():
+    """Refinement reference must be small enough that sending it to Gemini
+    doesn't blow up latency. Helper must produce something meaningfully
+    smaller than the input and clamp the longest side to 512px."""
+    from PIL import Image
+    import io
+    from services.design_generator import _compress_reference_image
+
+    # Synthesize a large PNG (2K square with structure so JPEG can't trivially
+    # collapse it — solid colors compress to near-zero and don't represent
+    # real images).
+    img = Image.new("RGB", (2048, 2048))
+    pixels = img.load()
+    for y in range(0, 2048, 32):
+        for x in range(0, 2048, 32):
+            pixels[x, y] = ((x * 31) % 255, (y * 17) % 255, ((x + y) * 13) % 255)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    big_bytes = buf.getvalue()
+
+    compressed, mime = _compress_reference_image(big_bytes)
+
+    assert mime == "image/jpeg"
+    # At minimum 5x smaller for any non-trivial image
+    assert len(compressed) < len(big_bytes) / 5, \
+        f"compressed too large: {len(compressed)} vs {len(big_bytes)}"
+    # Output must be a valid JPEG with longest side <= 512
+    out = Image.open(io.BytesIO(compressed))
+    assert out.format == "JPEG"
+    assert max(out.size) <= 512
+
+
+def test_compress_reference_image_handles_rgba_input():
+    """JPEG can't carry transparency — helper must flatten RGBA to RGB
+    before save() or PIL raises OSError."""
+    from PIL import Image
+    import io
+    from services.design_generator import _compress_reference_image
+
+    img = Image.new("RGBA", (1024, 1024), (255, 100, 50, 200))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    rgba_bytes = buf.getvalue()
+
+    # Must not raise OSError("cannot write mode RGBA as JPEG")
+    compressed, mime = _compress_reference_image(rgba_bytes)
+    assert mime == "image/jpeg"
+    assert len(compressed) > 0
+
+
+def test_modification_prelude_includes_required_text():
+    """When refining, the prelude must EXPLICITLY tell Gemini it's modifying
+    an existing image, not generating fresh. Otherwise it ignores the input
+    image and generates something completely different."""
+    from services.design_generator import MODIFICATION_PRELUDE
+    assert "MODIFYING an existing design" in MODIFICATION_PRELUDE
+    assert "Keep the same layout" in MODIFICATION_PRELUDE
+    assert "ONLY change what the user specifically asked" in MODIFICATION_PRELUDE
+    assert "Do NOT create a completely new design" in MODIFICATION_PRELUDE
+
+
+def test_generate_design_does_not_crash_on_none_headline(monkeypatch):
+    """Regression for the 502 caused by `headline[:60]` in a log line.
+
+    Mocks _get_client to raise a marker exception AFTER the log line, so we
+    never actually hit Gemini — but the log line itself MUST run cleanly
+    first. If headline=None crashes that line again, this test fails with
+    TypeError instead of the marker.
+    """
+    import asyncio as _asyncio
+
+    class _MarkerError(Exception):
+        pass
+
+    def fake_client():
+        raise _MarkerError("marker — proves log line ran")
+
+    monkeypatch.setattr("services.design_generator._get_client", fake_client)
+
+    from services.design_generator import generate_design as gen
+
+    with pytest.raises(_MarkerError):
+        _asyncio.run(gen(
+            description="test",
+            headline=None,
+            subtext=None,
+            headline_font="serif",
+            body_font="sans",
+        ))
 
 
 def test_anti_ai_block_includes_full_bleed_directive():
