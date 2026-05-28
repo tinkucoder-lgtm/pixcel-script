@@ -61,14 +61,19 @@ def test_bold_fonts_complete():
 def test_inpaint_algorithm_and_radius():
     src = _source()
     assert "INPAINT_TELEA" in src, "Inpaint algorithm must be INPAINT_TELEA"
-    assert "inpaintRadius=5" in src, "Inpaint radius must be 5"
+    assert "inpaintRadius=9" in src, "Inpaint radius must be 9"
 
 
-def test_inpaint_mask_pad_is_2():
-    """Mask is padded by 2 pixels: x-2, y-2, +w+2, +h+2."""
+def test_inpaint_mask_pad_is_8():
+    """Mask is padded by 8 pixels: x-8, y-8, +w+8, +h+8.
+
+    Increased from 2 to 8 to reduce text ghosting on photographic backgrounds —
+    larger pad means the inpaint algorithm has more clean pixels to sample
+    from when reconstructing the masked-out area.
+    """
     src = _source()
-    assert "x-2" in src and "y-2" in src, "Mask must use 2px pad (x-2, y-2)"
-    assert "w+2" in src and "h+2" in src, "Mask must use 2px pad (w+2, h+2)"
+    assert "x-8" in src and "y-8" in src, "Mask must use 8px pad (x-8, y-8)"
+    assert "w+8" in src and "h+8" in src, "Mask must use 8px pad (w+8, h+8)"
 
 
 def test_color_sampling_strip():

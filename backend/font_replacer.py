@@ -76,11 +76,11 @@ def replace_fonts(image_path, regions, font_name, output_path):
     for region in regions:
         bbox = region["bounding_box"]
         x, y, w, h = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
-        x1, y1 = max(0, x-2), max(0, y-2)
-        x2, y2 = min(img_w, x+w+2), min(img_h, y+h+2)
+        x1, y1 = max(0, x-8), max(0, y-8)
+        x2, y2 = min(img_w, x+w+8), min(img_h, y+h+8)
         mask[y1:y2, x1:x2] = 255
 
-    inpainted = cv2.inpaint(img_cv, mask, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
+    inpainted = cv2.inpaint(img_cv, mask, inpaintRadius=9, flags=cv2.INPAINT_TELEA)
     image = Image.fromarray(cv2.cvtColor(inpainted, cv2.COLOR_BGR2RGB))
 
     draw = ImageDraw.Draw(image)
