@@ -17,22 +17,19 @@ import stays cheap for any code path that doesn't actually generate.
 """
 import asyncio
 import logging
-import os
 import uuid
 from pathlib import Path
 from typing import Optional
 
 from config.font_presets import ANTI_AI_DESIGN
+from config.settings import settings
+from services.storage import LocalStorage
 
 logger = logging.getLogger(__name__)
 
-OUTPUTS_DIR = "outputs"
-MODEL_ID = "gemini-3-pro-image-preview"
-VERTEX_PROJECT = "pixelscript-prod"
-VERTEX_LOCATION = "global"
-DEFAULT_TIMEOUT_S = 300  # 5 min — covers normal Vertex range with margin
-
-_client = None  # cached singleton; lazy-init in _get_client
+# Module-level singletons; lazy-init the heavy ones.
+_client = None
+_storage = LocalStorage(settings.outputs_dir)
 
 
 class GenerationError(Exception):
@@ -49,6 +46,7 @@ class GenerationError(Exception):
 def _setup_google_creds():
     """Idempotent — same pattern as ocr.py. setdefault means an externally-set
     credential path takes precedence."""
+    import os
     key_path = Path(__file__).resolve().parent.parent / "vision-key.json"
     if key_path.exists():
         os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", str(key_path))
@@ -61,7 +59,9 @@ def _get_client():
         _setup_google_creds()
         from google import genai
         _client = genai.Client(
-            vertexai=True, project=VERTEX_PROJECT, location=VERTEX_LOCATION
+            vertexai=True,
+            project=settings.gcp_project,
+            location=settings.vertex_location,
         )
     return _client
 
@@ -94,8 +94,10 @@ def build_prompt(
 
 
 def _classify_genai_error(
-    exc: BaseException, timeout_s: float = DEFAULT_TIMEOUT_S
+    exc: BaseException, timeout_s: Optional[float] = None
 ) -> GenerationError:
+    if timeout_s is None:
+        timeout_s = settings.generation_timeout_s
     """Pure classifier — converts any exception from the genai call site into
     a GenerationError. Centralizing the mapping here makes it unit-testable
     without needing to mock the genai client."""
@@ -184,23 +186,26 @@ async def generate_design(
     subtext: Optional[str],
     headline_font: str,
     body_font: str,
-    timeout_s: float = DEFAULT_TIMEOUT_S,
+    timeout_s: Optional[float] = None,
 ) -> dict:
     """Async generation. Raises GenerationError on any failure (timeout,
     rate limit, content block, no image, etc.) — caller maps to HTTP."""
     from google.genai import types
 
+    if timeout_s is None:
+        timeout_s = settings.generation_timeout_s
+
     prompt = build_prompt(description, headline, subtext, headline_font, body_font)
     logger.info(
         "generate_design: model=%s, prompt_chars=%d, headline=%r",
-        MODEL_ID, len(prompt), headline[:60],
+        settings.model_id, len(prompt), headline[:60],
     )
 
     client = _get_client()
     try:
         response = await asyncio.wait_for(
             client.aio.models.generate_content(
-                model=MODEL_ID,
+                model=settings.model_id,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_modalities=["IMAGE", "TEXT"],
@@ -250,18 +255,15 @@ async def generate_design(
             502,
         )
 
-    os.makedirs(OUTPUTS_DIR, exist_ok=True)
     filename = f"generated_{uuid.uuid4()}.png"
-    output_path = os.path.join(OUTPUTS_DIR, filename)
-    with open(output_path, "wb") as f:
-        f.write(image_bytes)
+    output_url = _storage.write(filename, image_bytes)
     logger.info(
         "generate_design: saved %s (%d bytes, mime=%s, %d reasoning parts)",
-        output_path, len(image_bytes), inline_mime, len(reasoning_parts),
+        output_url, len(image_bytes), inline_mime, len(reasoning_parts),
     )
 
     return {
-        "output_path": output_path,
-        "output_url": f"/outputs/{filename}",
+        "output_path": f"{settings.outputs_dir}/{filename}",
+        "output_url": output_url,
         "reasoning_parts": reasoning_parts,
     }

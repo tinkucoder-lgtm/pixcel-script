@@ -62,7 +62,7 @@ Thumbs.db
 .DS_Store
 
 # Session debug artifacts
-backend/outputs/*.png
+backend/outputs/*
 backend/uploads/*
 backend/uvicorn_8002.log
 backend/*.log

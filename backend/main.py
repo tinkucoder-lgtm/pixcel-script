@@ -1,7 +1,10 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from slowapi.errors import RateLimitExceeded
 import base64
 import json
 import logging
@@ -13,14 +16,62 @@ import requests
 # Lazy imports for heavy image-processing modules to avoid import errors
 # at server startup when optional dependencies aren't installed.
 
+from config.limiter import limiter
+from config.settings import settings
 
-app = FastAPI(title="PixelScript API", version="1.0.0", description="API for AI-generated image font replacement")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    # Startup: sweep old output files. Cheap; iterates a few hundred entries.
+    from services.storage import LocalStorage
+    storage = LocalStorage(settings.outputs_dir)
+    deleted = storage.cleanup_older_than(settings.output_cleanup_age_hours)
+    logging.info(
+        "startup_cleanup: deleted %d output files older than %d hours",
+        deleted, settings.output_cleanup_age_hours,
+    )
+    yield
+    # Shutdown: nothing to do.
+
+
+app = FastAPI(
+    title="PixelScript API",
+    version="1.0.0",
+    description="API for AI-generated image font replacement + design generation",
+    lifespan=lifespan,
+)
+
+# CORS: tight by default (configurable via PIXELSCRIPT_CORS_ALLOWED_ORIGINS).
+# NEVER set this to ["*"] in prod.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Rate limiting (slowapi). The limiter itself is shared in config/limiter.py
+# so router decorators and this handler use the same instance.
+app.state.limiter = limiter
+
+
+def _rate_limit_handler(request, exc):
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": "rate_limit_exceeded",
+            "detail": f"Rate limit exceeded ({exc.detail}). Try again shortly.",
+        },
+    )
+
+
+app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
 
 UPLOADS_DIR = "uploads"
-OUTPUTS_DIR = "outputs"
+OUTPUTS_DIR = settings.outputs_dir
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
@@ -30,6 +81,28 @@ app.mount("/outputs", StaticFiles(directory=OUTPUTS_DIR), name="outputs")
 # below predate this pattern and stay where they are to avoid churn.
 from routers import generate_design
 app.include_router(generate_design.router)
+
+
+@app.get("/api/health")
+async def api_health():
+    """Cheap liveness + config introspection. Initializes the Vertex client
+    if not already (idempotent; cached singleton) but does NOT call Gemini."""
+    try:
+        from services.design_generator import _get_client
+        _get_client()
+        return {
+            "status": "ok",
+            "model": settings.model_id,
+            "project": settings.gcp_project,
+            "location": settings.vertex_location,
+            "rate_limit": settings.rate_limit_str,
+            "timeout_s": settings.generation_timeout_s,
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "detail": str(e)[:200]},
+        )
 
 class ProcessRequest(BaseModel):
     file_id: str

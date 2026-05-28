@@ -8,22 +8,25 @@ Validation rules (return 422 if violated):
   - headline_font / body_font: optional; ≤100 chars each
   - cross-field: must provide font_preset OR both headline_font and body_font
 
-Font resolution (after validation):
-  - If font_preset provided → use its headline_font / body_font as defaults
-  - If headline_font or body_font also provided → overrides the preset value
-  - Custom-only mode (no preset) requires both headline_font and body_font
+Rate limiting: per-IP via slowapi using settings.rate_limit_str.
+Excess requests return 429 with {"error": "rate_limit_exceeded", "detail": ...}.
 
-Errors from the underlying service are returned as JSON {error, detail} with
-clean HTTP statuses — never a raw 500 or stack trace.
+Structured logging: one JSON line per request (success or error) for usage +
+spend monitoring. See `_emit_generation_event` for schema.
 """
+import json
 import logging
+import time
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from config.font_presets import FONT_PRESETS
+from config.limiter import limiter
+from config.settings import settings
 
 router = APIRouter(prefix="/api/generate-design", tags=["generate-design"])
 logger = logging.getLogger(__name__)
@@ -57,24 +60,52 @@ class GenerateDesignRequest(BaseModel):
         return self
 
 
+def _emit_generation_event(
+    *,
+    description: str,
+    preset: str,
+    latency_s: float,
+    outcome: str,
+    cost_usd: float,
+) -> None:
+    """Emit one structured JSON line per generation event for monitoring."""
+    event = {
+        "event": "generation",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "description": description[:100],
+        "preset": preset,
+        "latency_s": round(latency_s, 2),
+        "outcome": outcome,
+        "estimated_cost_usd": round(cost_usd, 4),
+    }
+    logger.info("generation_event %s", json.dumps(event, ensure_ascii=False))
+
+
 @router.post("")
-async def generate_design_endpoint(req: GenerateDesignRequest):
-    # Font resolution: preset as base, custom overrides per-field
-    headline_font = None
-    body_font = None
+@limiter.limit(settings.rate_limit_str)
+async def generate_design_endpoint(request: Request, req: GenerateDesignRequest):
+    # Resolve fonts (preset as base, custom overrides per-field)
+    headline_font = body_font = None
     if req.font_preset:
-        preset = FONT_PRESETS[req.font_preset]
-        headline_font = preset["headline_font"]
-        body_font = preset["body_font"]
+        preset_def = FONT_PRESETS[req.font_preset]
+        headline_font = preset_def["headline_font"]
+        body_font = preset_def["body_font"]
     if req.headline_font:
         headline_font = req.headline_font
     if req.body_font:
         body_font = req.body_font
-    # model_validator above guarantees both are now set
+
+    preset_label = req.font_preset or "custom"
+    t0 = time.perf_counter()
 
     try:
         from services.design_generator import generate_design, GenerationError
     except Exception as exc:
+        latency = time.perf_counter() - t0
+        _emit_generation_event(
+            description=req.description, preset=preset_label,
+            latency_s=latency, outcome="import_failed", cost_usd=0.0,
+        )
         logger.exception("generate-design: dependency import failed")
         return JSONResponse(
             status_code=500,
@@ -89,7 +120,19 @@ async def generate_design_endpoint(req: GenerateDesignRequest):
             headline_font=headline_font,
             body_font=body_font,
         )
+        latency = time.perf_counter() - t0
+        _emit_generation_event(
+            description=req.description, preset=preset_label,
+            latency_s=latency, outcome="success",
+            cost_usd=settings.estimated_cost_per_image_usd,
+        )
+        return {"image_url": result["output_url"]}
     except GenerationError as exc:
+        latency = time.perf_counter() - t0
+        _emit_generation_event(
+            description=req.description, preset=preset_label,
+            latency_s=latency, outcome=exc.kind, cost_usd=0.0,
+        )
         logger.warning(
             "generate-design: %s (http %d) — %s", exc.kind, exc.http_status, exc.message
         )
@@ -98,8 +141,11 @@ async def generate_design_endpoint(req: GenerateDesignRequest):
             content={"error": exc.kind, "detail": exc.message},
         )
     except Exception as exc:
-        # Defensive catch — the service should always raise GenerationError,
-        # but if something slips through, surface it cleanly rather than a 500.
+        latency = time.perf_counter() - t0
+        _emit_generation_event(
+            description=req.description, preset=preset_label,
+            latency_s=latency, outcome="unexpected", cost_usd=0.0,
+        )
         logger.exception("generate-design: unexpected error escaped service")
         return JSONResponse(
             status_code=502,
@@ -108,5 +154,3 @@ async def generate_design_endpoint(req: GenerateDesignRequest):
                 "detail": f"{type(exc).__name__}: {str(exc)[:300]}",
             },
         )
-
-    return {"image_url": result["output_url"]}
