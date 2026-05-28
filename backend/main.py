@@ -26,6 +26,11 @@ os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
 app.mount("/outputs", StaticFiles(directory=OUTPUTS_DIR), name="outputs")
 
+# Routers — new features live here per project convention; the inline endpoints
+# below predate this pattern and stay where they are to avoid churn.
+from routers import generate_design
+app.include_router(generate_design.router)
+
 class ProcessRequest(BaseModel):
     file_id: str
 
